@@ -2,6 +2,8 @@
 using MatchaRunner.Api.Outgoing;
 using MatchaRunner.Configuration;
 using MatchaRunner.Constants;
+using MatchaRunner.Services;
+using MatchaRunner.Storage;
 using MatchaRunner.Utils;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,7 +16,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
-[assembly: InternalsVisibleTo("PIPScriptWriter.Tests")]
+[assembly: InternalsVisibleTo("AzureTeamsToMatchaBot.Tests")]
 
 namespace MatchaRunner.Handlers
 {
@@ -30,6 +32,7 @@ namespace MatchaRunner.Handlers
 		private readonly Matcha _matchaSettings;
 		private readonly ILogger<BotMessageHandler> _logger;
 		private readonly IHttpClientFactory _httpClientFactory;
+		private readonly IJiraService _jiraService;
 
 		/// <summary>
 		/// Temporary in-memory store for pending audio uploads.
@@ -39,12 +42,13 @@ namespace MatchaRunner.Handlers
 		internal static readonly ConcurrentDictionary<string, byte[]> PendingAudioUploads = new();
 
 
-		public BotMessageHandler(IHttpClientFactory clientFactory, IOptions<Matcha> matchaOptions, ILogger<BotMessageHandler> logger)
+		public BotMessageHandler(IHttpClientFactory clientFactory, IOptions<Matcha> matchaOptions, ILogger<BotMessageHandler> logger, IJiraService jiraService)
 		{
 			this._matchaHttpClient = clientFactory.CreateClient(ApiNamedClients.Matcha);
 			this._matchaSettings = matchaOptions.Value;
 			this._logger = logger;
 			this._httpClientFactory = clientFactory;
+			this._jiraService = jiraService;
 		}
 
 
@@ -57,13 +61,54 @@ namespace MatchaRunner.Handlers
 
 				string userText = context.Activity?.Text?.Trim() ?? string.Empty;
 
-				if (IsAskingForHelp(userText))
+				if (CommandParser.IsAskingForHelp(userText))
 				{
-					await context.Send(CannedResponses.Help);
+					MessageActivity helpActivity = new()
+					{
+						Attachments = new List<Attachment> { BuildHelpCard() }
+					};
+					await context.Send(helpActivity, cancellationToken);
 					return;
 				}
 
-				bool isAudio = IsAskingForAudio(userText);
+				if (CommandParser.IsAudioApproved(userText))
+				{
+					string? ticketNumber = CommandParser.ExtractTicketNumber(userText);
+					TicketValidationResult validation = CommandParser.ValidateTicketNumber(ticketNumber);
+
+					if (!validation.IsValid)
+					{
+						await context.Send(validation.ErrorMessage!);
+						return;
+					}
+
+					string userId = context.Activity.From.AadObjectId;
+					byte[]? audioBytes = UserAudioStore.GetAudio(userId);
+
+					if (audioBytes == null)
+					{
+						await context.Send(CannedResponses.NoAudioFound);
+						return;
+					}
+
+					await context.Send(CannedResponses.AudioApprovedProcessing);
+
+					JiraUploadResult result = await _jiraService.UploadAttachmentAsync(ticketNumber!, audioBytes, cancellationToken);
+
+					if (result.Success)
+					{
+						await context.Send($"Audio uploaded successfully! View ticket: {result.TicketUrl}");
+						UserAudioStore.RemoveAudio(userId);
+					}
+					else
+					{
+						await context.Send(result.ErrorMessage!);
+					}
+
+					return;
+				}
+
+				bool isAudio = CommandParser.IsAskingForAudio(userText);
 
 				if (isAudio)
 				{
@@ -113,8 +158,11 @@ namespace MatchaRunner.Handlers
 						}
 						else
 						{
+							// Store audio for potential --audio-approved upload
+							UserAudioStore.StoreAudio(context.Activity.From.AadObjectId, audioBytes);
+
 							// Send the script text first
-							if (IsAskingForAudioAndScript(userText))
+							if (CommandParser.IsAskingForAudioAndScript(userText))
 							{ 
 								await context.Send(matchaResponse, cancellationToken);
 							}
@@ -262,9 +310,144 @@ namespace MatchaRunner.Handlers
 			}
 		}
 
-		private static bool IsAskingForHelp(string input) => input.ToLower().Contains("--help");
-		private static bool IsAskingForAudio(string input) => input.ToLower().Contains("--audio");
-		private static bool IsAskingForAudioAndScript(string input) => input.ToLower().Contains("--include-script");
+		/// <summary>
+		/// Builds an AdaptiveCard attachment listing all available bot commands
+		/// with descriptions and usage examples.
+		/// </summary>
+		internal static Attachment BuildHelpCard()
+		{
+			AdaptiveCard card = new(new AdaptiveSchemaVersion(1, 4))
+			{
+				Body = new List<AdaptiveElement>
+				{
+					new AdaptiveTextBlock
+					{
+						Text = "📋 Available Commands",
+						Weight = AdaptiveTextWeight.Bolder,
+						Size = AdaptiveTextSize.Large
+					},
+					new AdaptiveTextBlock
+					{
+						Text = "Here are the commands you can use with this bot:",
+						Wrap = true,
+						Spacing = AdaptiveSpacing.Small
+					},
+					new AdaptiveContainer
+					{
+						Separator = true,
+						Spacing = AdaptiveSpacing.Medium,
+						Items = new List<AdaptiveElement>
+						{
+							new AdaptiveTextBlock
+							{
+								Text = "`--audio`",
+								Weight = AdaptiveTextWeight.Bolder,
+								Spacing = AdaptiveSpacing.Small
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Generate an audio file from your PIP script.",
+								Wrap = true,
+								Spacing = AdaptiveSpacing.None
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Usage: `PIP-629 --audio`",
+								IsSubtle = true,
+								Spacing = AdaptiveSpacing.None
+							}
+						}
+					},
+					new AdaptiveContainer
+					{
+						Separator = true,
+						Spacing = AdaptiveSpacing.Medium,
+						Items = new List<AdaptiveElement>
+						{
+							new AdaptiveTextBlock
+							{
+								Text = "`--audio --include-script`",
+								Weight = AdaptiveTextWeight.Bolder,
+								Spacing = AdaptiveSpacing.Small
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Generate audio and also return the script text.",
+								Wrap = true,
+								Spacing = AdaptiveSpacing.None
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Usage: `PIP-629 --audio --include-script`",
+								IsSubtle = true,
+								Spacing = AdaptiveSpacing.None
+							}
+						}
+					},
+					new AdaptiveContainer
+					{
+						Separator = true,
+						Spacing = AdaptiveSpacing.Medium,
+						Items = new List<AdaptiveElement>
+						{
+							new AdaptiveTextBlock
+							{
+								Text = "`--audio-approved`",
+								Weight = AdaptiveTextWeight.Bolder,
+								Spacing = AdaptiveSpacing.Small
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Upload your last generated audio file to the specified Jira ticket.",
+								Wrap = true,
+								Spacing = AdaptiveSpacing.None
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Usage: `PIP-629 --audio-approved`",
+								IsSubtle = true,
+								Spacing = AdaptiveSpacing.None
+							}
+						}
+					},
+					new AdaptiveContainer
+					{
+						Separator = true,
+						Spacing = AdaptiveSpacing.Medium,
+						Items = new List<AdaptiveElement>
+						{
+							new AdaptiveTextBlock
+							{
+								Text = "`--help`",
+								Weight = AdaptiveTextWeight.Bolder,
+								Spacing = AdaptiveSpacing.Small
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Show this help message.",
+								Wrap = true,
+								Spacing = AdaptiveSpacing.None
+							},
+							new AdaptiveTextBlock
+							{
+								Text = "Usage: `--help`",
+								IsSubtle = true,
+								Spacing = AdaptiveSpacing.None
+							}
+						}
+					}
+				}
+			};
+
+			string cardJson = card.ToJson();
+			JsonElement cardContent = JsonDocument.Parse(cardJson).RootElement;
+
+			return new Attachment
+			{
+				ContentType = ContentType.AdaptiveCard,
+				Content = cardContent
+			};
+		}
 
 		/// <summary>
 		/// Creates a FileConsentCard attachment that asks the user for permission

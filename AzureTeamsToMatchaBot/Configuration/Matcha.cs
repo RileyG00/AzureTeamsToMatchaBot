@@ -6,5 +6,6 @@
 		public string FlowId { get; set; } = string.Empty;
 		public string DesignStudioApiKey { get; set; } = string.Empty;
 		public string OpenAIApiKey { get; set; } = string.Empty;
+		public string JiraApiToken { get; set; } = string.Empty;
 	}
 }

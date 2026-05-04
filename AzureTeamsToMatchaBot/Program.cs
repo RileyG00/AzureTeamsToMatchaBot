@@ -1,6 +1,8 @@
+using System.Net.Http.Headers;
 using MatchaRunner.Configuration;
 using MatchaRunner.Constants;
 using MatchaRunner.Handlers;
+using MatchaRunner.Services;
 using Microsoft.Teams.Api.Auth;
 using Microsoft.Teams.Apps;
 using Microsoft.Teams.Apps.Activities;
@@ -54,6 +56,15 @@ builder.Services.AddHttpClient(ApiNamedClients.Matcha, options =>
 	options.DefaultRequestHeaders.Add("x-api-key", matchSettings.DesignStudioApiKey);
 	options.DefaultRequestHeaders.Add("User-Agent", "MatchaProductTeamAnalysis");
 });
+
+builder.Services.AddHttpClient(ApiNamedClients.Jira, options =>
+{
+	options.BaseAddress = new Uri("https://connecture.atlassian.net");
+	options.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", matchSettings.JiraApiToken);
+	options.DefaultRequestHeaders.Add("X-Atlassian-Token", "no-check");
+});
+
+builder.Services.AddSingleton<IJiraService, JiraService>();
 
 
 //-----------------------------------------------------------
