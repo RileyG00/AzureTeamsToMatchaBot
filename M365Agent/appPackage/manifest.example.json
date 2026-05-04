@@ -1,0 +1,43 @@
+{
+	"$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
+	"manifestVersion": "1.25",
+	"version": "1.0.0",
+	"id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+	"developer": {
+		"name": "Riley Griffin",
+		"websiteUrl": "https://example.com",
+		"privacyUrl": "https://example.com/privacy",
+		"termsOfUseUrl": "https://example.com/terms-of-service"
+	},
+	"icons": {
+		"color": "color.png",
+		"outline": "outline.png"
+	},
+	"name": {
+		"short": "{name}",
+		"full": "{name}"
+	},
+	"description": {
+		"short": "{description}",
+		"full": "{description}"
+	},
+	"accentColor": "#FFFFFF",
+	"bots": [
+		{
+			"botId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+			"scopes": [
+				"personal"
+			],
+			"supportsFiles": true,
+			"isNotificationOnly": false,
+			"commandLists": []
+		}
+	],
+	"permissions": [
+		"identity",
+		"messageTeamMembers"
+	],
+	"validDomains": [
+		"example.com"
+	]
+}

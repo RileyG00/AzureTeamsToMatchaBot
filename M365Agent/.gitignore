@@ -1,0 +1,12 @@
+# TeamsFx files
+build
+appPackage/build
+env/.env.*.user
+env/.env.local
+appsettings.Development.json
+.deployment
+appPackage/manifest.json
+appPackage/*.png
+
+# User-specific files
+*.user
