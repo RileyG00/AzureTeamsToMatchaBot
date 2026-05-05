@@ -82,7 +82,14 @@ namespace MatchaRunner.Handlers
 						return;
 					}
 
-					string userId = context.Activity.From.AadObjectId;
+					string? userId = context?.Activity?.From.AadObjectId;
+					if (userId == null)
+					{
+						await context.Send("Invalid user error.");
+						return;
+					}
+
+
 					byte[]? audioBytes = UserAudioStore.GetAudio(userId);
 
 					if (audioBytes == null)
@@ -141,12 +148,15 @@ namespace MatchaRunner.Handlers
 				{
 					try
 					{
-						AudioClient client = new AudioClient("tts-1-hd", this._matchaSettings.OpenAIApiKey);
+						AudioClient client = new AudioClient("gpt-4o-mini-tts", this._matchaSettings.OpenAIApiKey);
+
+						GeneratedSpeechVoice voiceOfAgent = GetRandomVoice();
+						SpeechGenerationOptions? speechGenerationOptions = GetSpeechOptions();
 
 						ClientResult<BinaryData> ttsResponse = await client.GenerateSpeechAsync(
 							matchaResponse,
-							GeneratedSpeechVoice.Nova,
-							null,
+							voiceOfAgent,
+							speechGenerationOptions,
 							CancellationToken.None
 						);
 
@@ -476,6 +486,37 @@ namespace MatchaRunner.Handlers
 				Content = cardContent,
 				Name = fileName
 			};
+		}
+
+		private static GeneratedSpeechVoice GetRandomVoice()
+		{
+			GeneratedSpeechVoice[] voiceOptions = [ GeneratedSpeechVoice.Nova, GeneratedSpeechVoice.Verse, GeneratedSpeechVoice.Coral, GeneratedSpeechVoice.Shimmer ];
+			Random rand = new();
+			int randIndex = rand.Next(voiceOptions.Length);
+
+			try
+			{
+				return voiceOptions[randIndex];
+			}
+			catch
+			{
+				return GeneratedSpeechVoice.Nova;
+			}
+		}
+
+		private static SpeechGenerationOptions? GetSpeechOptions()
+		{
+			try
+			{
+				return new SpeechGenerationOptions()
+				{
+					Instructions = "Respond in a happy and energetic manner. Do not speak slowly."
+				};
+			}
+			catch
+			{
+				return null;
+			}
 		}
 	}
 }
